@@ -8,6 +8,9 @@
 #include <math.h>    /* HUGE_VAL */
 #include <stdlib.h>  /* NULL, malloc(), realloc(), free(), strtod() */
 #include <string.h>  /* memcpy() */
+#include<unistd.h>
+#include<stdbool.h>
+#include<ctype.h>
 
 #ifndef LEPT_PARSE_STACK_INIT_SIZE
 #define LEPT_PARSE_STACK_INIT_SIZE 256
@@ -92,18 +95,85 @@ static int lept_parse_number(lept_context* c, lept_value* v) {
 
 static const char* lept_parse_hex4(const char* p, unsigned* u) {
     /* \TODO */
+    char tmp[4] = {0};
+    int i;
+    for(i = 0;i <4 && *p!= 0 && (isdigit(*p) || isalpha(*p))  ;i++)
+    {
+        if(isalpha(*p))
+        {
+            bool flag = false;
+            if(*p >= 'a' && *p <='f' ) flag = true;
+            if(*p >= 'A' && *p <= 'F') flag = true;
+            if(!flag) break;
+        }
+        tmp[i] = *p++;
+    }
+    if(i == 4) *u = strtol(tmp, NULL, 16);
+    else return NULL;
+    /*printf("%d\n", *u);*/
     return p;
 }
 
 static void lept_encode_utf8(lept_context* c, unsigned u) {
     /* \TODO */
+    /*assert(u>0x10ffff);*/
+    if(u>= 0x0000 && u<= 0x007f)
+    {
+        PUTC(c, u);
+    }
+    else if(u>= 0x0080 && u<= 0x07ff)
+    {
+         char tmp[2] = {0};
+         unsigned char  byte_1 =  0b11000000;
+         unsigned char  byte_2 =  0b10000000;
+
+         tmp[0] = byte_1 | (u >> 6 & 0xff); 
+         tmp[1] = byte_2 | (u      & 0x3f);
+         PUTC(c, tmp[0]);
+         PUTC(c, tmp[1]);
+    }
+    else if(u>= 0x0800 && u<= 0xffff)
+    {
+         char tmp[3] = {0};
+         unsigned char byte_1 = 0xe0;
+         unsigned char byte_2 = 0x80;
+         unsigned char byte_3 = 0x80;
+
+         tmp[0] = (byte_1 | ((u>> 12) & 0xff));
+         tmp[1] = (byte_2 | ((u>> 6)  & 0x3f));
+         tmp[2] = (byte_3 | (u        & 0x3f));
+
+         PUTC(c, tmp[0]);
+         PUTC(c, tmp[1]);
+         PUTC(c, tmp[2]);
+    }
+    else
+    {
+         char tmp[4] = {0};
+         unsigned char byte_1 = 0b11110000;
+         unsigned char byte_2 = 0x80;
+         unsigned char byte_3 = 0x80;
+         unsigned char byte_4 = 0x80;
+
+         tmp[0] = (byte_1 | ((u>> 18) & 0xff));
+         tmp[1] = (byte_2 | ((u>> 12) & 0x3f));
+         tmp[2] = (byte_3 | ((u>> 6)  & 0x3f));
+         tmp[3] = (byte_4 | (u        & 0x3f));
+
+         PUTC(c, tmp[0]);
+         PUTC(c, tmp[1]);
+         PUTC(c, tmp[2]);
+         PUTC(c, tmp[3]);
+    }
 }
 
 #define STRING_ERROR(ret) do { c->top = head; return ret; } while(0)
 
 static int lept_parse_string(lept_context* c, lept_value* v) {
     size_t head = c->top, len;
-    unsigned u;
+    unsigned u = 0;
+    bool issurrogate = false;
+    int pre_u = 0;
     const char* p;
     EXPECT(c, '\"');
     p = c->json;
@@ -111,6 +181,7 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
         char ch = *p++;
         switch (ch) {
             case '\"':
+                if(issurrogate) STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
                 len = c->top - head;
                 lept_set_string(v, (const char*)lept_context_pop(c, len), len);
                 c->json = p;
@@ -129,6 +200,20 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
                         if (!(p = lept_parse_hex4(p, &u)))
                             STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
                         /* \TODO surrogate handling */
+                        if(issurrogate)
+                        {
+                            if(u>= 0xdc00 && u<= 0xdfff)
+                            {
+                                lept_context_pop(c, 3);
+                                u = 0x10000 + (pre_u - 0xd800) * 0x400 + (u- 0xdc00);
+                            }
+                            else 
+                            {
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                            }
+                            issurrogate = false;
+                        }
+                        if(u>= 0xd800 && u<= 0xdbff) issurrogate = true, pre_u = u;
                         lept_encode_utf8(c, u);
                         break;
                     default:
