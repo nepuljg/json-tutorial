@@ -187,6 +187,7 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
     size_t size = 0;
     int ret;
     EXPECT(c, '[');
+    lept_parse_whitespace(c);
     if (*c->json == ']') {
         c->json++;
         v->type = LEPT_ARRAY;
@@ -194,6 +195,7 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
         v->u.a.e = NULL;
         return LEPT_PARSE_OK;
     }
+    lept_parse_whitespace(c);
     for (;;) {
         lept_value e;
         lept_init(&e);
@@ -201,8 +203,9 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
             return ret;
         memcpy(lept_context_push(c, sizeof(lept_value)), &e, sizeof(lept_value));
         size++;
+        lept_parse_whitespace(c);
         if (*c->json == ',')
-            c->json++;
+            c->json++, lept_parse_whitespace(c);
         else if (*c->json == ']') {
             c->json++;
             v->type = LEPT_ARRAY;
@@ -253,6 +256,16 @@ void lept_free(lept_value* v) {
     assert(v != NULL);
     if (v->type == LEPT_STRING)
         free(v->u.s.s);
+    if(v->type == LEPT_ARRAY)
+    {
+        int i;
+        for(i = 0; i< v->u.a.size ; i++)
+        {
+            lept_free(v->u.a.e + i);
+        }
+    }
+    if(v->u.a.e)free(v->u.a.e), v->u.a.e = NULL;
+    v->u.a.size = 0;
     v->type = LEPT_NULL;
 }
 
