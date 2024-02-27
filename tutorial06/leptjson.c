@@ -138,7 +138,7 @@ static int lept_parse_string_raw(lept_context* c, char** str, size_t* l)
         switch (ch) {
             case '\"':
                 len = c->top - head;
-                *str = c->stack;
+                *str = c->stack + head;
                 *l  = len;
                 c->json = p;
                 return LEPT_PARSE_OK;
@@ -188,7 +188,6 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
     if ((ret = lept_parse_string_raw(c, &s, &len)) == LEPT_PARSE_OK)
     {
         lept_set_string(v, s, len);
-        printf("str = %s\n", v->u.s);
         lept_context_pop(c, len);
     }
     return ret;
@@ -259,13 +258,53 @@ static int lept_parse_object(lept_context* c, lept_value* v) {
         /* \todo parse key to m.k, m.klen */
         /* \todo parse ws colon ws */
         /* parse value */
+        lept_value kv;
+        if( (ret = lept_parse_string(c, &kv)) != LEPT_PARSE_OK) 
+        {
+            ret = LEPT_PARSE_INVALID_STRING_CHAR;
+        }
+        int len = kv.u.s.len;
+        m.k = malloc((sizeof(char) * (len + 1)));
+        memcpy(m.k, kv.u.s.s, len);
+        m.k[len] = '\0';
+        m.klen = len;
+        lept_parse_whitespace(c);
+        EXPECT(c, ':');
+        lept_parse_whitespace(c);
+
         if ((ret = lept_parse_value(c, &m.v)) != LEPT_PARSE_OK)
             break;
         memcpy(lept_context_push(c, sizeof(lept_member)), &m, sizeof(lept_member));
         size++;
+        
         m.k = NULL; /* ownership is transferred to member on stack */
+        lept_parse_whitespace(c);
+        
+        if(*c->json == ',')
+        {
+            c->json ++ ;
+            lept_parse_whitespace(c);
+        }
+        else if(*c->json == '}')
+        {
+            c->json ++;
+            v->type = LEPT_OBJECT;
+            v->u.o.size = size;
+            size *= sizeof(lept_member);
+            memcpy(v->u.o.m = (lept_member*)malloc(size), lept_context_pop(c, size), size);
+            return LEPT_PARSE_OK;
+        }
+        else 
+        {
+            ret =  LEPT_PARSE_MISS_COMMA_OR_CURLY_BRACKET;
+            break;
+        }
         /* \todo parse ws [comma | right-curly-brace] ws */
+        
     }
+    int i;
+    for (i = 0; i < size; i++)
+        lept_free((lept_member*)lept_context_pop(c, sizeof(lept_member)));
     /* \todo Pop and free members on the stack */
     return ret;
 }
